@@ -83,7 +83,7 @@ class KbTableInterpForward(Function):
         This is a wrapper for for PyTorch autograd.
         """
         grid_size = torch.tensor(image.shape[2:], device=image.device)
-
+        
         output = table_interp(
             image=image,
             omega=omega,
@@ -93,6 +93,10 @@ class KbTableInterpForward(Function):
             table_oversamp=table_oversamp,
             offsets=offsets,
         )
+
+        # print("\nshape of image\n", image.shape)
+        # print("\nshape of omega\n", omega.shape)
+        # print("\nshape of output\n", output.shape)
 
         ctx.save_for_backward(
             omega, n_shift, numpoints, table_oversamp, offsets, grid_size, *tables
@@ -127,7 +131,38 @@ class KbTableInterpForward(Function):
             grid_size=grid_size,
         )
 
-        return image, None, None, None, None, None, None
+        # print("\nshape of data\n", data.shape)
+        # print("\nshape of omega\n", omega.shape)
+        # print("\nshape of image\n", image.shape)
+
+        dk = 0.001
+        N_om = omega.shape[1]
+        omega_dh = omega + torch.tensor([dk,0.0,0.0])[:,None].repeat_interleave(N_om, dim=1).to(omega)
+        omega_dk = omega + torch.tensor([0.0,dk,0.0])[:,None].repeat_interleave(N_om, dim=1).to(omega)
+        omega_dl = omega + torch.tensor([0.0,0.0,dk])[:,None].repeat_interleave(N_om, dim=1).to(omega)
+
+        omega_disp = torch.cat((omega_dh,omega_dk,omega_dl),dim=1)
+        
+        # print("\nshape of omega_disp\n", omega_disp.shape)
+        output_h, output_k, output_l = torch.split(
+            table_interp(
+                image=image,
+                omega=omega_disp,
+                tables=tables,
+                n_shift=n_shift,
+                numpoints=numpoints,
+                table_oversamp=table_oversamp,
+                offsets=offsets,
+            ), (N_om, N_om, N_om), dim=-1
+        )
+
+        grad_omega_h = torch.cat(
+            (output_h, output_k, output_l), dim=0
+        ).squeeze().real / dk
+        
+        # print("\nshape of grad_omega_h\n", grad_omega_h.shape)
+
+        return image, grad_omega_h, None, None, None, None, None
 
 
 class KbTableInterpAdjoint(Function):
